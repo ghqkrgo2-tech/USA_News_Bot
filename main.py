@@ -28,16 +28,16 @@ RSS_SOURCES = {
 PER_SOURCE = 15        # 소스당 가져올 기사 수
 TOP_N = 10             # 최종 선별 개수
 
-SELECTION_PROMPT = """당신은 뉴스 큐레이터입니다. 아래는 오늘 미국 주요 언론사(AP, Reuters, NPR)의 기사 목록입니다.
+SELECTION_PROMPT = """당신은 뉴스 큐레이터입니다. 아래는 오늘 미국 주요 언론사(AP, Reuters, NPR)의 기사 목록입니다. 각 기사에는 고유 번호가 있습니다.
 
 작업:
 1. 이 중 가장 중요하고 영향력 있는 뉴스 {top_n}개를 선별하세요.
-2. 같은 사건을 다룬 중복 기사는 하나로 합치세요 (여러 언론사가 다룬 사건일수록 중요한 뉴스입니다).
+2. 같은 사건을 다룬 중복 기사는 하나만 고르세요 (여러 언론사가 다룬 사건일수록 중요한 뉴스입니다).
 3. 특정 언론사에 쏠리지 않게 하세요.
 4. 각 기사에 대해 자연스러운 한국어 제목과 한 줄 요약(한국어)을 작성하세요.
 
-반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트, 마크다운 코드블록 없이 JSON만 출력하세요:
-{{"articles": [{{"title_ko": "한국어 제목", "summary_ko": "한 줄 요약", "source": "언론사명", "link": "원문 링크"}}]}}
+반드시 아래 JSON 형식으로만 응답하세요. 링크나 원문 제목을 출력하지 말고, 반드시 기사 번호(id)로만 지칭하세요. 다른 텍스트, 마크다운 코드블록 없이 JSON만 출력하세요:
+{{"articles": [{{"id": 기사번호, "title_ko": "한국어 제목", "summary_ko": "한 줄 요약"}}]}}
 
 기사 목록:
 {articles}"""
@@ -98,9 +98,9 @@ def fetch_articles() -> list:
 
 
 def summarize_with_gemini(articles: list) -> list | None:
-    """Gemini에게 선별+번역+요약을 맡김. 실패하면 None."""
+    """Gemini에게 선별+번역+요약을 맡김. 링크는 LLM을 거치지 않고 원본에서 매핑."""
     article_lines = "\n".join(
-        f"- [{a['source']}] {a['title']} ({a['link']})" for a in articles
+        f"{i}. [{a['source']}] {a['title']}" for i, a in enumerate(articles)
     )
     prompt = SELECTION_PROMPT.format(top_n=TOP_N, articles=article_lines)
 
@@ -111,7 +111,18 @@ def summarize_with_gemini(articles: list) -> list | None:
         # 혹시 ```json ``` 로 감싸서 주면 벗겨내기
         text = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
         data = json.loads(text)
-        items = data.get("articles", [])
+        items = []
+        for it in data.get("articles", []):
+            idx = it.get("id")
+            if not isinstance(idx, int) or not (0 <= idx < len(articles)):
+                continue  # 잘못된 번호는 버림
+            original = articles[idx]
+            items.append({
+                "title_ko": it.get("title_ko", ""),
+                "summary_ko": it.get("summary_ko", ""),
+                "source": original["source"],   # 원본에서 가져옴
+                "link": original["link"],        # 원본에서 가져옴 → 절대 안 깨짐
+            })
         return items[:TOP_N] if items else None
     except Exception as e:
         print(f"[경고] Gemini 응답 파싱 실패: {e}")

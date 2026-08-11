@@ -48,12 +48,35 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-GEMINI_URL = (
+GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
+GEMINI_URL_TEMPLATE = (
     "https://generativelanguage.googleapis.com/v1beta/"
-    "models/gemini-2.0-flash:generateContent"
+    "models/{model}:generateContent"
 )
 
 KST = timezone(timedelta(hours=9))
+
+
+def call_gemini(prompt: str) -> str | None:
+    """모델 목록을 순서대로 시도. 성공하면 응답 텍스트, 전부 실패하면 None."""
+    for model in GEMINI_MODELS:
+        try:
+            res = requests.post(
+                GEMINI_URL_TEMPLATE.format(model=model),
+                headers={"x-goog-api-key": GEMINI_API_KEY},
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=60,
+            )
+            if res.status_code == 404:
+                print(f"[정보] 모델 {model} 없음(404), 다음 모델 시도")
+                continue
+            res.raise_for_status()
+            return res.json()["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception as e:
+            body = getattr(e, "response", None)
+            detail = body.text[:500] if body is not None else str(e)
+            print(f"[경고] 모델 {model} 호출 실패: {detail}")
+    return None
 
 
 def fetch_articles() -> list:
@@ -81,22 +104,18 @@ def summarize_with_gemini(articles: list) -> list | None:
     )
     prompt = SELECTION_PROMPT.format(top_n=TOP_N, articles=article_lines)
 
+    text = call_gemini(prompt)
+    if text is None:
+        return None
     try:
-        res = requests.post(
-            GEMINI_URL,
-            params={"key": GEMINI_API_KEY},
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=60,
-        )
-        res.raise_for_status()
-        text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
         # 혹시 ```json ``` 로 감싸서 주면 벗겨내기
         text = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
         data = json.loads(text)
         items = data.get("articles", [])
         return items[:TOP_N] if items else None
     except Exception as e:
-        print(f"[경고] Gemini 요약 실패: {e}")
+        print(f"[경고] Gemini 응답 파싱 실패: {e}")
+        print(f"[디버그] 응답 앞부분: {text[:300]}")
         return None
 
 
@@ -115,13 +134,26 @@ def build_message(items: list) -> str:
 
 
 def build_fallback_message(articles: list) -> str:
-    """Gemini 실패 시: 영어 원문 제목 그대로 발송."""
+    """Gemini 실패 시: 소스별로 번갈아 뽑아서 영어 원문 제목으로 발송."""
     today = datetime.now(KST).strftime("%m월 %d일")
+
+    # 소스별로 그룹핑 후 라운드로빈으로 골고루 선택
+    by_source = {}
+    for a in articles:
+        by_source.setdefault(a["source"], []).append(a)
+    picked = []
+    idx = 0
+    while len(picked) < TOP_N and any(by_source.values()):
+        for source in list(by_source.keys()):
+            if idx < len(by_source[source]) and len(picked) < TOP_N:
+                picked.append(by_source[source][idx])
+        idx += 1
+
     lines = [
-        f"🇺🇸 <b>{today} 미국 뉴스 TOP {TOP_N}</b>",
+        f"🇺🇸 <b>{today} 미국 뉴스 TOP {len(picked)}</b>",
         "<i>(요약 서비스 오류로 원문 제목으로 보냅니다)</i>\n",
     ]
-    for i, a in enumerate(articles[:TOP_N], 1):
+    for i, a in enumerate(picked, 1):
         lines.append(f'{i}. <a href="{a["link"]}">{a["title"]}</a> ({a["source"]})')
     return "\n".join(lines)
 

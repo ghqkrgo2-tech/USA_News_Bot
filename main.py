@@ -44,9 +44,9 @@ SELECTION_PROMPT = """당신은 뉴스 큐레이터입니다. 아래는 오늘 �
 
 # ────────────────────────────────────────────────────────────────
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHAT_ID = os.environ["CHAT_ID"]
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+BOT_TOKEN = os.environ["BOT_TOKEN"].strip()
+CHAT_ID = os.environ["CHAT_ID"].strip()
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"].strip()
 
 GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
 GEMINI_URL_TEMPLATE = (

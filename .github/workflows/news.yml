@@ -1,0 +1,28 @@
+name: 미국 뉴스 브리핑 발송
+
+on:
+  schedule:
+    - cron: '33 21 * * *'   # UTC 21:33 = 한국시간 06:33 (한국 뉴스봇보다 먼저)
+  workflow_dispatch:         # 수동 실행 버튼 (테스트용)
+
+jobs:
+  send-us-news:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 의존성 설치
+        run: pip install requests feedparser
+
+      - name: 뉴스 발송
+        run: python main.py
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
